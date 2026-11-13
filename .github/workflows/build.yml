@@ -1,0 +1,43 @@
+# WakeDeck.exe 自動ビルド (GitHub Actions / Windows ランナー)
+# - main への push と手動実行でビルドし、Artifacts に WakeDeck.exe を置く
+# - v* タグ (例: v1.0.0) を push すると Release にも exe を添付する
+name: Build WakeDeck.exe
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python tests/test_core.py
+
+      - name: Build exe
+        run: pyinstaller --noconfirm --onefile --noconsole --name WakeDeck --icon "assets\wakedeck.ico" --add-data "assets\wakedeck.ico;assets" --add-data "assets\wakedeck.png;assets" wake_deck.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WakeDeck-exe
+          path: dist/WakeDeck.exe
+
+      - name: Attach to Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/WakeDeck.exe

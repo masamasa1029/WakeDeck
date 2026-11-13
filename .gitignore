@@ -1,0 +1,30 @@
+# Local configuration may contain network details and credentials.
+config*.json
+config*.json.*
+!config.example.json
+
+# Python caches and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# PyInstaller output
+dist/
+build/
+*.spec
+WakeDeck.exe
+
+# Local environment and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# OS metadata
+.DS_Store
+Thumbs.db
