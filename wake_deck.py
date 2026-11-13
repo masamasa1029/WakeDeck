@@ -60,7 +60,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 APP_NAME = "WakeDeck"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 IS_WINDOWS = platform.system() == "Windows"
 
 # ---------------------------------------------------------------------------
@@ -396,6 +396,15 @@ STATUS_LABEL = {
     "checking": ("確認中…", "#616161"),
     "unknown": ("未設定", "#9e9e9e"),
 }
+
+
+def server_row_action(cfg: Config, status: str) -> str:
+    """一覧行の電源ボタンで実行できる操作を返す"""
+    if not cfg.is_configured:
+        return "disabled"
+    if status in (STATUS_BOOTING, STATUS_ONLINE):
+        return "disabled" if cfg.is_monitor_only() else "off"
+    return "on"
 
 
 def ping_host(host: str, timeout_ms: int = 700) -> bool:
@@ -1224,24 +1233,61 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
     # --- 一覧 (Treeview) --------------------------------------------------------
     list_frame = tk.Frame(root, padx=16)
     list_frame.pack(fill="both", expand=False)
-    columns = ("name", "os", "host", "mac", "user", "status")
+    columns = ("start", "name", "os", "host", "mac", "user", "status")
     tree = ttk.Treeview(list_frame, columns=columns, show="headings",
                         selectmode="extended", height=9)
-    for col, title, width in (("name", "名前", 150), ("os", "OS", 70),
-                              ("host", "IP / ホスト名", 130),
-                              ("mac", "MACアドレス", 140), ("user", "SSHユーザー", 100),
+    for col, title, width in (("name", "名前", 140), ("os", "OS", 64),
+                              ("host", "IP / ホスト名", 125),
+                              ("mac", "MACアドレス", 135), ("user", "SSHユーザー", 90),
                               ("status", "状態", 110)):
         tree.heading(col, text=title)
         tree.column(col, width=width, anchor="w")
+    tree.heading("start", text="電源操作")
+    tree.column("start", width=76, minwidth=76, stretch=False, anchor="center")
     tree.tag_configure("online", foreground="#2e7d32")
     tree.tag_configure("booting", foreground="#ef6c00")
     tree.tag_configure("offline", foreground="#9e9e9e")
     tree.tag_configure("checking", foreground="#616161")
     tree.tag_configure("unknown", foreground="#9e9e9e")
     tree.pack(side="left", fill="both", expand=True)
-    scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
+    start_buttons: dict[int, tk.Button] = {}
+    button_sync_pending = {"value": False}
+
+    def sync_start_buttons():
+        button_sync_pending["value"] = False
+        for uid, button in start_buttons.items():
+            item = str(uid)
+            box = tree.bbox(item, "start") if tree.exists(item) else ()
+            if box:
+                x, y, width, height = box
+                button.place(x=x + (width - 44) // 2, y=y + 1,
+                             width=44, height=max(1, height - 2))
+            else:
+                button.place_forget()
+
+    def schedule_start_button_sync():
+        if not button_sync_pending["value"]:
+            button_sync_pending["value"] = True
+            root.after_idle(sync_start_buttons)
+
+    def scroll_tree(*args):
+        tree.yview(*args)
+        schedule_start_button_sync()
+
+    scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=scroll_tree)
+
+    def update_scrollbar(first, last):
+        scrollbar.set(first, last)
+        schedule_start_button_sync()
+
+    tree.configure(yscrollcommand=update_scrollbar)
     scrollbar.pack(side="right", fill="y")
+
+    def on_tree_configure(event):
+        if event.widget is tree:
+            schedule_start_button_sync()
+
+    tree.bind("<Configure>", on_tree_configure, add="+")
 
     def status_text(uid: int) -> str:
         """状態キー (online など) から、表示用の文字列と色を返す"""
@@ -1256,21 +1302,44 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
         user_disp = ("(監視のみ)" if cfg.is_monitor_only() else
                      cfg.ssh_user or ("(RPC方式)" if cfg.is_windows
                                       and cfg.windows_method == "rpc" else "(未設定)"))
-        return (cfg.server_name, "Windows" if cfg.is_windows else "Linux",
+        return ("", cfg.server_name, "Windows" if cfg.is_windows else "Linux",
                 cfg.host, cfg.mac_address or "(未設定)",
                 user_disp, status_text(uid))
+
+    def update_start_button(uid: int):
+        button = start_buttons.get(uid)
+        cfg = uid_of.get(uid)
+        if button is None or cfg is None:
+            return
+        action = server_row_action(cfg, status_of.get(uid, "unknown"))
+        if uid in busy:
+            button.configure(text="…", state="disabled")
+        else:
+            labels = {"on": "ON", "off": "OFF", "disabled": "—"}
+            button.configure(text=labels[action],
+                             state="disabled" if action == "disabled" else "normal")
 
     def add_row(uid: int):
         """一覧へサーバーの行を追加する"""
         cfg = uid_of[uid]
         tree.insert("", "end", iid=str(uid), values=row_values(uid),
                     tags=(status_of.get(uid, "unknown"),))
+        button = tk.Button(
+            tree, text="ON", width=4, font=("Yu Gothic UI", 8, "bold"),
+            padx=2, pady=0, command=lambda row_uid=uid: toggle_server_power(row_uid),
+            bg="#e8f5e9", fg="#2e7d32", activebackground="#c8e6c9",
+            activeforeground="#1b5e20")
+        start_buttons[uid] = button
+        update_start_button(uid)
+        schedule_start_button_sync()
 
     def update_row(uid: int):
         """一覧の既存の行の表示を最新状態に直す"""
         if tree.exists(str(uid)):
             tree.item(str(uid), values=row_values(uid),
                       tags=(status_of.get(uid, "unknown"),))
+        update_start_button(uid)
+        schedule_start_button_sync()
 
     for uid in list(uid_of.keys()):
         add_row(uid)
@@ -1410,6 +1479,7 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
                     if error is not None:
                         messagebox.showerror(
                             APP_NAME, f"[{cfg.server_name}] {error}")
+                    update_row(uid)
                     refresh_progress()
                     update_buttons()
                     poll_uid(uid)
@@ -1453,11 +1523,27 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
             ready.append(c)
         return ready
 
+    def start_server(uid: int):
+        """指定した1台の電源ON処理を開始する"""
+        cfg = uid_of.get(uid)
+        if cfg is None or uid in busy:
+            return
+        if not cfg.is_configured:
+            log("未設定のため起動できません (ダブルクリックで編集)", cfg)
+            return
+        if status_of.get(uid) == STATUS_ONLINE:
+            log("既に起動済みのためスキップしました", cfg)
+            return
+        log("--- 電源ON ---", cfg)
+        run_op(cfg, lambda target, log: power_on(target, log=log),
+               "電源ON", kind="on")
+
     def do_on(cfgs: list[Config] | None = None):
         """「電源を入れる」ボタンの処理"""
         for c in (cfgs if cfgs is not None else targets_for("on")):
-            log("--- 電源ON ---", c)
-            run_op(c, lambda cfg, log: power_on(cfg, log=log), "電源ON", kind="on")
+            uid = uid_for_cfg(c)
+            if uid is not None:
+                start_server(uid)
 
     def do_off(cfgs: list[Config] | None = None, reboot: bool = False):
         """「電源を切る / 再起動」ボタンの処理"""
@@ -1472,6 +1558,17 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
             log(f"--- {'再起動' if reboot else '電源OFF'} ---", c)
             run_op(c, lambda cfg, log, r=reboot: power_off(cfg, log=log, reboot=r),
                    "再起動" if reboot else "電源OFF")
+
+    def toggle_server_power(uid: int):
+        """一覧行のボタンから、状態に応じて起動またはシャットダウンする"""
+        cfg = uid_of.get(uid)
+        if cfg is None or uid in busy:
+            return
+        action = server_row_action(cfg, status_of.get(uid, "unknown"))
+        if action == "off":
+            do_off([cfg])
+        elif action == "on":
+            start_server(uid)
 
     def do_all_on():
         """「すべてON」ボタンの処理"""
@@ -1638,8 +1735,12 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
             cfg_to_uid.pop(id(cfg), None)
             status_of.pop(uid, None)
             servers.remove(cfg)
+            button = start_buttons.pop(uid, None)
+            if button is not None:
+                button.destroy()
             if tree.exists(str(uid)):
                 tree.delete(str(uid))
+        schedule_start_button_sync()
         persist()
         refresh_summary()
         update_buttons()

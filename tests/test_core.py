@@ -340,6 +340,25 @@ with tempfile.TemporaryDirectory() as td:
         lp.Path.home = orig_home
 
 # --- 監視のみモード (SSH/RPCなし) -------------------------------------------------
+row_server = lp.Config(host="192.0.2.39", mac_address="55:66:77:88:99:DD",
+                       ssh_user="example_user")
+check("server row action is ON when offline",
+      lp.server_row_action(row_server, lp.STATUS_OFFLINE) == "on")
+check("server row action is OFF when booting",
+      lp.server_row_action(row_server, lp.STATUS_BOOTING) == "off")
+check("server row action is OFF when online",
+      lp.server_row_action(row_server, lp.STATUS_ONLINE) == "off")
+check("server row action supports Windows RPC",
+      lp.server_row_action(lp.Config(
+          host="192.0.2.38", mac_address="55:66:77:88:99:CC",
+          os_type="windows", windows_method="rpc"), lp.STATUS_ONLINE) == "off")
+check("server row action disables monitor-only shutdown",
+      lp.server_row_action(lp.Config(
+          host="192.0.2.37", mac_address="55:66:77:88:99:BB"),
+          lp.STATUS_ONLINE) == "disabled")
+check("server row action disables unconfigured server",
+      lp.server_row_action(lp.Config(), lp.STATUS_OFFLINE) == "disabled")
+
 mon = lp.Config(server_name="監視のみ機", host="192.0.2.40",
                 mac_address="55:66:77:88:99:AA", monitor_only=True)
 check("monitor_only configured without ssh user", mon.is_configured)
