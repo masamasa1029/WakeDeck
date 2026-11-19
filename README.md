@@ -1,7 +1,7 @@
 # WakeDeck
 
-**ローカルLAN内の Ubuntu Server の電源を、Windowsからワンクリックで操作するツールです。**
-毎回 Wake on LAN パケットを手で送ったり、SSH で `sudo poweroff` を打ったりする手間をなくします。
+**ローカルLAN内のサーバーやPCの電源を、Windowsからワンクリックで操作するツールです。**
+対象は Linux（Ubuntu などのディストリビューション全般）と Windows の両方です。毎回 Wake on LAN パケットを手で送ったり、SSH で `sudo poweroff` を打ったりする手間をなくします。
 
 ![WakeDeck main window](screenshot.png)
 
@@ -14,7 +14,7 @@ GUI（Tkinter）と CLI の両対応です。ショートカットやタスク�
 
 **複数サーバーを一覧で管理できます。** 登録した全サーバーの状態が一覧に色付きで並び（起動済み=緑 / 起動中=橙 / 停止中=グレー）、1台ずつの操作のほか、複数選択してまとめてON/OFFしたり、「すべてON」「すべてOFF」で一括操作したりできます。
 
-**Windows の PC も対象にできます。** 一覧に OS 列が付き、登録時に OS種別（Ubuntu / Linux か Windows）を選ぶだけです。電源ONは Linux と同じ WoL、電源OFFは方式が2つあります（下の「Windows PC を対象にする場合」参照）。
+**Linux と Windows が混在していても大丈夫です。** 一覧に OS 列が付き、登録時に OS種別（Linux か Windows）を選ぶだけです。電源ONはどちらも同じ WoL で、Windows の電源OFFは方式が2つあります（下の「Windows PC を対象にする場合」参照）。
 
 **ネットワーク検索ができます。** IPアドレス / ホスト名 / MACアドレス の相互解決と、LAN内スキャン（/24 の機器一覧）ができます。検索結果やスキャン結果からそのままサーバー登録できるので、追加時に MAC を調べに行く手間がなくなります（下の「ネットワーク検索」参照）。
 
@@ -24,7 +24,7 @@ GUI（Tkinter）と CLI の両対応です。ショートカットやタスク�
 
 ## 使い方（Windows）
 
-### 1) Ubuntu Server 側の準備（最初に1回だけ）
+### 1) Linux サーバー側の準備（最初に1回だけ）
 
 **すでに WoL で起こせていて、SSH から `sudo poweroff` もできているサーバーは、この手順は不要です。** WakeDeck はサーバー側に何もインストールせず、いま手動でやっている WoL パケット送信と SSH 操作をそのまま自動化するだけです。対象サーバーの IP / MAC / SSH 情報を GUI に登録するだけで使えます（複数台ある場合は台数分登録してください）。
 
@@ -37,6 +37,8 @@ BIOS/UEFI で Wake on LAN を有効にしてください（マザーボードに
 ```bash
 sudo bash ubuntu/setup_wol.sh
 ```
+
+なお、この `ubuntu/setup_wol.sh` は Ubuntu / Debian 系（apt と systemd を使う環境）向けの補助スクリプトです。他のディストリビューションでは、同じ内容（WoL 有効化の永続化と SSHサーバーの導入）をそのディストリビューションの方法で行ってください。WakeDeck 本体はディストリビューションを問いません。
 
 このスクリプトがやること:
 
@@ -53,7 +55,7 @@ install_and_run.bat
 ```
 
 - Python 3.11以上が必要です（なければ https://www.python.org/downloads/ から導入し、インストール時に `Add python.exe to PATH` にチェック）
-- `paramiko` が無ければ自動で `pip install -r requirements.txt` します
+- **`paramiko` のインストールを推奨します**（無ければ `install_and_run.bat` が自動で `pip install -r requirements.txt` します）。パスワード認証での電源OFF/再起動・SSH接続テストと、「公開鍵を登録」ボタンは paramiko が必要です。paramiko が無い場合は OS 標準の OpenSSH クライアント（`ssh.exe`）へフォールバックしますが、その場合は鍵認証 + パスワードなし sudo が前提になります（詳細は下の「仕組み」参照）
 - 起動後は `start.bat` だけで開けます（`WakeDeck.exe` があればそちらを優先して起動します）
 
 exe化したい場合は `build_exe.bat` を実行してください。PyInstaller で単一ファイルの `WakeDeck.exe` を作ります（`config.json` は exe と同じフォルダに保存されます）。
@@ -66,7 +68,7 @@ exe化したい場合は `build_exe.bat` を実行してください。PyInstall
 | 項目 | 説明 |
 |---|---|
 | 表示名 | 一覧に出る名前（例: `メインサーバー`、`ファイルサーバー`） |
-| OS種別 | `Ubuntu / Linux` か `Windows` |
+| OS種別 | `Linux` か `Windows` |
 | 電源OFF方式 (Windows対象のみ) | `SSH (OpenSSHサーバー)` か `RPC (shutdownコマンド)`。下記参照 |
 | 対象のIP / ホスト名 * | 例: `192.0.2.10` |
 | MACアドレス * | 例: `02:00:00:00:00:01`（`:` / `-` / なし、どれでも可） |
@@ -192,7 +194,7 @@ python wake_deck.py --config C:\path\to\config.json   # 設定ファイルを指
 - **WoL**: マジックパケット（`FF×6 + MAC×16`、SecureOnパスワード指定時は+6バイト）を、ブロードキャスト / `255.255.255.255` / サーバーIPの複数宛先へ3回送信します
 - **電源OFF/再起動 (Linux)**: `paramiko` でSSH接続し、パスワードがある場合は `sudo -S` でパスワードを渡して `poweroff` / `reboot` を実行します。パスワードが無い場合は `sudo -n`（パスワードなしsudo設定が前提）になります
 - **電源OFF/再起動 (Windows)**: SSH方式は OpenSSH サーバーへ接続して `shutdown /s|/r /t 0 /f`、RPC方式は操作側の `shutdown.exe /m` で実行します
-- **paramiko が無い場合**: OSにインストールされた OpenSSH クライアント（Windowsでは `ssh.exe`）へフォールバックします。パスワード認証は使えず、Linuxの電源操作ではパスワードなしsudoが前提です
+- **paramiko が無い場合**: OSにインストールされた OpenSSH クライアント（Windowsでは `ssh.exe`）へフォールバックします。パスワード認証は使えず、Linuxの電源操作ではパスワードなしsudoが前提です。そのため、特別な理由が無ければ paramiko をインストールした状態での利用を推奨します
 - **状態判定**: ping と管理ポート（SSH方式は設定したSSHポート / RPC方式は445番）の応答で判定します。監視のみは指定ポート、またはポート未指定ならpingで判定し、GUIは `check_interval_sec`（初期値4秒）ごとに全台を確認します
 
 ## うまく動かないとき
@@ -230,7 +232,7 @@ WakeDeck/
   assets/wakedeck.svg   # アプリアイコンの編集用ベクター原稿
   assets/wakedeck.ico   # GUI / exe 用アイコン
   assets/wakedeck.png   # Tkinter ウィンドウ用アイコン
-  ubuntu/setup_wol.sh   # Ubuntu側のWoL有効化スクリプト
+  ubuntu/setup_wol.sh   # Ubuntu / Debian系向けのWoL有効化スクリプト
   tests/test_core.py    # 単体テスト
 ```
 

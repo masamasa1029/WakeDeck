@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-WakeDeck - ローカルLAN内の Ubuntu Server 電源管理ツール (Windows用)
+WakeDeck - ローカルLAN内のサーバー / PC 電源管理ツール (Windows用、対象は Linux / Windows)
 
 やること:
   電源ON  : Wake on LAN マジックパケットを送信する
@@ -12,7 +12,7 @@ WakeDeck - ローカルLAN内の Ubuntu Server 電源管理ツール (Windows用
 
 設計:
   - WoL / ping / 状態判定は Python標準ライブラリのみ
-  - SSHのパスワード認証には paramiko を使用 (pip install paramiko)
+  - SSHのパスワード認証には paramiko を使用 (pip install paramiko、インストール推奨)
     paramiko が無い環境では Windows標準の ssh.exe + 鍵認証 + パスワードなしsudo
     へ自動フォールバックする
   - SSHパスワードは Windows では DPAPI で暗号化して config.json に保存する
@@ -60,7 +60,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 APP_NAME = "WakeDeck"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 IS_WINDOWS = platform.system() == "Windows"
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ def unprotect_secret(stored: str) -> str:
 
 @dataclass
 class Config:
-    server_name: str = "Ubuntu Server"
+    server_name: str = "サーバー"
     host: str = ""                        # IPアドレス or ホスト名
     mac_address: str = ""                 # 例: AA:BB:CC:DD:EE:FF
     broadcast_address: str = ""           # 空なら host から /24 で自動計算 + 255.255.255.255
@@ -1111,7 +1111,7 @@ def power_on(cfg: Config, log=print, wait: bool = True, wait_timeout: int = 180)
             return True
         time.sleep(3)
     log(f"{wait_timeout}秒以内にSSH応答がありませんでした。"
-        "パケットは送信済みなので、BIOS/UEFIとUbuntu側のWoL設定を確認してください (README参照)")
+        "パケットは送信済みなので、BIOS/UEFIとサーバー側のWoL設定を確認してください (README参照)")
     return False
 
 
@@ -1943,13 +1943,13 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
         win.grab_set()
         entries: dict = {}
         combo_values = {
-            "os_type": ["Ubuntu / Linux", "Windows"],
+            "os_type": ["Linux", "Windows"],
             "windows_method": ["SSH (OpenSSHサーバー)", "RPC (shutdownコマンド)"],
         }
         fields = [
             ("server_name", "表示名", cfg.server_name, False),
             ("os_type", "OS種別",
-             "Windows" if cfg.is_windows else "Ubuntu / Linux", "combo"),
+             "Windows" if cfg.is_windows else "Linux", "combo"),
             ("windows_method", "電源OFF方式 (Windows対象のみ)",
              "RPC (shutdownコマンド)" if cfg.windows_method == "rpc"
              else "SSH (OpenSSHサーバー)", "combo"),
@@ -2181,7 +2181,7 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
 def main(argv: list[str] | None = None) -> int:
     """コマンドライン実行の入口。引数に応じて GUI / 電源操作 / 検索に振り分ける"""
     parser = argparse.ArgumentParser(
-        description="WakeDeck - Ubuntu Server の電源を WoL / SSH で操作する (複数サーバー対応)")
+        description="WakeDeck - LAN内のサーバー / PC の電源を WoL / SSH で操作する (複数台対応)")
     parser.add_argument("--config", type=str, default="",
                         help="config.json のパス (省略時: 本体と同じフォルダ)")
     parser.add_argument("--server", type=str, default="",
