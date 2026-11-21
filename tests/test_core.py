@@ -421,6 +421,39 @@ with tempfile.TemporaryDirectory() as td:
     check("monitor fields roundtrip", loaded[0].monitor_only and not loaded[1].monitor_only is False
           and loaded[1].status_port == 3389)
 
+# --- 一覧ソート (表示だけの並べ替え用キー) --------------------------------------
+check("user display normal", lp.server_user_display(
+    lp.Config(ssh_user="masa")) == "masa")
+check("user display monitor-only", lp.server_user_display(
+    lp.Config(host="192.0.2.50", mac_address="11:22:33:44:55:99")) == "(監視のみ)")
+check("user display rpc", lp.server_user_display(
+    lp.Config(os_type="windows", windows_method="rpc")) == "(RPC方式)")
+check("host sort is numeric for ipv4",
+      sorted(["192.168.1.10", "192.168.1.2", "server.local", ""],
+             key=lp.host_sort_key)
+      == ["192.168.1.2", "192.168.1.10", "server.local", ""])
+_sort_cfgs = [
+    (lp.Config(server_name="zeta", host="192.168.1.10"), lp.STATUS_OFFLINE),
+    (lp.Config(server_name="alpha", host="192.168.1.2"), lp.STATUS_ONLINE),
+    (lp.Config(server_name="mid", host="192.168.1.3"), lp.STATUS_BOOTING),
+]
+check("list sort by host uses ip order",
+      [c.server_name for c, _s in sorted(
+          _sort_cfgs, key=lambda cs: lp.server_list_sort_key(cs[0], cs[1], "host"))]
+      == ["alpha", "mid", "zeta"])
+check("list sort by status uses meaning order",
+      [c.server_name for c, _s in sorted(
+          _sort_cfgs, key=lambda cs: lp.server_list_sort_key(cs[0], cs[1], "status"))]
+      == ["alpha", "mid", "zeta"])
+check("list sort by name",
+      [c.server_name for c, _s in sorted(
+          _sort_cfgs, key=lambda cs: lp.server_list_sort_key(cs[0], cs[1], "name"))]
+      == ["alpha", "mid", "zeta"])
+check("status sort order covers all labels",
+      [lp.STATUS_SORT_ORDER[s] for s in
+       (lp.STATUS_ONLINE, lp.STATUS_BOOTING, "checking", lp.STATUS_OFFLINE, "unknown")]
+      == [0, 1, 2, 3, 4])
+
 print()
 if failures:
     print(f"{len(failures)} FAILED: {failures}")

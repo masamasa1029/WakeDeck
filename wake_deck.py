@@ -60,7 +60,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 
 APP_NAME = "WakeDeck"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.1.0"
 IS_WINDOWS = platform.system() == "Windows"
 
 # ---------------------------------------------------------------------------
@@ -405,6 +405,68 @@ def server_row_action(cfg: Config, status: str) -> str:
     if status in (STATUS_BOOTING, STATUS_ONLINE):
         return "disabled" if cfg.is_monitor_only() else "off"
     return "on"
+
+
+def server_user_display(cfg: Config) -> str:
+    """一覧の「SSHユーザー」列に表示する文字列を返す。
+
+    監視のみの台は「(監視のみ)」、RPC方式の Windows は「(RPC方式)」、
+    それ以外で未入力なら「(未設定)」と表示する (一覧の表示とソートで共用する)。
+    """
+    if cfg.is_monitor_only():
+        return "(監視のみ)"
+    if cfg.ssh_user:
+        return cfg.ssh_user
+    if cfg.is_windows and cfg.windows_method == "rpc":
+        return "(RPC方式)"
+    return "(未設定)"
+
+
+# 状態ソートの意味順 (小さいほど上)。文字順だと「起動中/停止中/起動済み」が
+# バラバラになるため、状態の進み具合で順序を固定する。
+STATUS_SORT_ORDER = {
+    STATUS_ONLINE: 0,   # 起動済み
+    STATUS_BOOTING: 1,  # 起動中
+    "checking": 2,      # 確認中
+    STATUS_OFFLINE: 3,  # 停止中
+    "unknown": 4,       # 未設定
+}
+
+
+def host_sort_key(host: str) -> tuple[int, tuple[int, ...], str]:
+    """IP / ホスト名列のソート用キーを返す。
+
+    IPv4 は各オクテットを数値として比べる (文字列順だと 192.168.1.10 が
+    192.168.1.2 より前に来てしまうため)。並びは IPv4 → ホスト名 → 空欄 の順。
+    """
+    host = (host or "").strip()
+    if is_ipv4(host):
+        return (0, tuple(int(part) for part in host.split(".")), "")
+    if host:
+        return (1, (), host.casefold())
+    return (2, (), "")
+
+
+def server_list_sort_key(cfg: Config, status: str, column: str) -> tuple:
+    """サーバー一覧のソート用キーを返す (column は列の内部名)。
+
+    どの列で並べても最後にサーバー名を控えのキーとして付け、同点でも
+    並びが安定するようにする。表示だけの並べ替え用で、登録順 (servers
+    リストや config.json) は一切変えない。
+    """
+    if column == "os":
+        primary: tuple = ("windows" if cfg.is_windows else "linux",)
+    elif column == "host":
+        return host_sort_key(cfg.host) + (cfg.server_name.casefold(),)
+    elif column == "mac":
+        primary = ((cfg.mac_address or "").casefold(),)
+    elif column == "user":
+        primary = (server_user_display(cfg).casefold(),)
+    elif column == "status":
+        primary = (STATUS_SORT_ORDER.get(status, len(STATUS_SORT_ORDER)),)
+    else:  # "name" などはサーバー名そのもので比べる
+        primary = (cfg.server_name.casefold(),)
+    return primary + (cfg.server_name.casefold(),)
 
 
 def ping_host(host: str, timeout_ms: int = 700) -> bool:
@@ -1236,11 +1298,46 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
     columns = ("start", "name", "os", "host", "mac", "user", "status")
     tree = ttk.Treeview(list_frame, columns=columns, show="headings",
                         selectmode="extended", height=9)
+    column_titles = {"name": "名前", "os": "OS", "host": "IP / ホスト名",
+                     "mac": "MACアドレス", "user": "SSHユーザー", "status": "状態"}
+    sort_state = {"column": None, "reverse": False}  # 表示ソートの現在状態
+
+    def refresh_heading_labels():
+        """見出しへ現在のソート方向 (▲=昇順 / ▼=降順) を付けて表示し直す"""
+        for col, title in column_titles.items():
+            label = title
+            if sort_state["column"] == col:
+                label = f"{title} {'▼' if sort_state['reverse'] else '▲'}"
+            tree.heading(col, text=label)
+
+    def sort_rows_by_column(column: str):
+        """見出しクリックで一覧の表示順だけを並べ替える。
+
+        登録順 (servers リスト / config.json) は変えない。同じ列をもう一度
+        押すと昇順/降順が反転する。状態は自動更新で頻繁に変わるため、状態列で
+        並べた後も自動では並べ直さない (操作中に行が動くと押し間違えるため)。
+        """
+        if sort_state["column"] == column:
+            sort_state["reverse"] = not sort_state["reverse"]
+        else:
+            sort_state["column"] = column
+            sort_state["reverse"] = False
+        ordered_uids = sorted(
+            uid_of.keys(),
+            key=lambda uid: server_list_sort_key(
+                uid_of[uid], status_of.get(uid, "unknown"), column),
+            reverse=sort_state["reverse"])
+        for index, uid in enumerate(ordered_uids):
+            tree.move(str(uid), "", index)
+        refresh_heading_labels()
+        schedule_start_button_sync()
+
     for col, title, width in (("name", "名前", 140), ("os", "OS", 64),
                               ("host", "IP / ホスト名", 125),
                               ("mac", "MACアドレス", 135), ("user", "SSHユーザー", 90),
                               ("status", "状態", 110)):
-        tree.heading(col, text=title)
+        tree.heading(col, text=title,
+                     command=lambda clicked_col=col: sort_rows_by_column(clicked_col))
         tree.column(col, width=width, anchor="w")
     tree.heading("start", text="電源操作")
     tree.column("start", width=76, minwidth=76, stretch=False, anchor="center")
@@ -1299,12 +1396,9 @@ def run_gui(servers: list[Config], cfg_path: Path, check_interval_sec: int = 4) 
     def row_values(uid: int) -> tuple:
         """一覧表の1行に表示する値の並びを作る"""
         cfg = uid_of[uid]
-        user_disp = ("(監視のみ)" if cfg.is_monitor_only() else
-                     cfg.ssh_user or ("(RPC方式)" if cfg.is_windows
-                                      and cfg.windows_method == "rpc" else "(未設定)"))
         return ("", cfg.server_name, "Windows" if cfg.is_windows else "Linux",
                 cfg.host, cfg.mac_address or "(未設定)",
-                user_disp, status_text(uid))
+                server_user_display(cfg), status_text(uid))
 
     def update_start_button(uid: int):
         button = start_buttons.get(uid)
